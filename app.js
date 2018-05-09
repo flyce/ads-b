@@ -97,7 +97,7 @@ function calcNL_lat() {
             1 - 
             (
                 (1-Math.cos(Math.PI/(2*NZ))/
-                (Math.cos(Math.PI/180*calcRawLatitude()) * Math.cos(Math.PI/180*calcRawLatitude))
+                (Math.cos(Math.PI/180*(calcRawLatitude()/131072)) * Math.cos(Math.PI/180*(calcRawLatitude()/131072)))
             )
         )
     )));
@@ -132,7 +132,6 @@ function calcNL() {
 
 function calcRawLatitude() {
     const RawLatitude = parseInt(getLatitudeInCPRFormat(), 2);
-    console.log("RawLatitude = ", RawLatitude);
     return RawLatitude;
 }
 
@@ -142,25 +141,45 @@ function calcRawLongtitude() {
 
 function calcDLat() {
     const DLat = getCPROddOrEvenFrameFlag() == 0 ? 360 / (4 * NZ) : 360.0 / (4 * NZ - 1);
-    console.log("DLat = ", DLat);
     return DLat;
 }
 
 function clacLatitudeIndexJ() {
     const dLat = calcDLat();
-    console.log(mod(LATref, dLat));
-    const LatitudeIndexJ =  floor(LATref/dLat) + floor((mod(LATref, dLat)/dLat) - calcRawLatitude() + 1/2);
-    console.log("LatitudeIndexJ = ", LatitudeIndexJ);
+    const LatitudeIndexJ =  floor(LATref/dLat) + floor((mod(LATref, dLat)/dLat) - calcRawLatitude()/131072.0 + 1/2);
     return LatitudeIndexJ;
 }
 
-console.log(clacLatitudeIndexJ())
 function calcLatitude() {
-    return dLat*(clacLatitudeIndexJ() + calcRawLatitude());
+    return calcDLat() * (clacLatitudeIndexJ() + calcRawLatitude()/131072);
+}
+console.log(calcLatitude());
+
+function calcDLon() {
+    const NL_lat = calcNL_lat();
+    console.log("NL_lat: ", NL_lat);
+    if ( NL_lat > 0) {
+        return 360/(NL_lat*0.6);
+    }
+    
+    if(NL_lat == 0) {
+        return 360;
+    }
 }
 
+function calcLongtitudeIndexM() {
+    const dLon = calcDLon();
+    console.log("dLon: ", dLon);
+    const LongtitudeIndexM = floor(LONGref/dLon) + floor(mod(LONGref, dLon)/dLon - calcRawLongtitude()/131072 + 1/2);
+    console.log(LongtitudeIndexM)
+    return LongtitudeIndexM;
+}
 
-console.log(calcAltitude())
+function calcLongtitude() {
+    return calcDLon() * (calcLongtitudeIndexM() + calcRawLongtitude()/131072);
+}
+
+console.log(calcLongtitude());
 // const Decoder = require('mode-s-decoder')
 // const decoder = new Decoder()
 // const data = new Uint8Array([0x8f, 0x46, 0x1f, 0x36, 0x60, 0x4d, 0x74, 0x82, 0xe4, 0x4d, 0x97, 0xbc, 0xd6, 0x4e])
