@@ -154,7 +154,6 @@ function clacLatitudeIndexJ() {
     return LatitudeIndexJ;
 }
 
-
 console.log(clacLatitudeIndexJ())
 function calcLatitude() {
     return dLat*(clacLatitudeIndexJ() + calcRawLatitude());
