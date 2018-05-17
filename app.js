@@ -1,11 +1,47 @@
 const hexToBinary = require('./fun/hex2binary');
-let RawMessage = "8D40621D58C382D690C8AC2863A7";
-let RawMessageTwo = "8D40621D58C386435CC412692AD6";
+const lineReader = require('line-reader');
+// let RawMessage = "8D40621D58C382D690C8AC2863A7";
+// let RawMessageTwo = "8D40621D58C386435CC412692AD6";
 
 const NZ = 15;
+// 参考经纬度，请根据实际情况修订
 const LATref = 52.258;
 const LONGref = 3.918;
 
+async function readFile() {
+    const buffer = await readFilePromise('./DF17.TXT');
+    let data = buffer.toString(); //=> '... file contents ...'
+    console.log(buffer);
+}
+
+let lastOne = '';
+let lineCount = 0;
+lineReader.eachLine('./DF17.TXT', function(line, last) {
+    lineCount++;
+    console.log();
+    console.log("第", lineCount, "行数据");
+    if (lastOne !== '') {
+        let messageOne = dataProcessor(lastOne), messageTwo = dataProcessor(line);
+        let location = calcLocationWithTwoMessage(messageOne, messageTwo);
+        if (location.error == null) {
+            console.log("数据1: %s, 数据2: %s", lastOne, line);
+            console.log("数据1高度: %s, 数据2高度: %s", messageOne.Altitude, messageTwo.Altitude);
+            console.log("经度: %s, 纬度: %s", location.Latitude, location.Longitude);
+        } else {
+            location = calcLocationWithOneMessage(messageTwo);
+            console.log("数据: %s", line);
+            console.log("高度: %s", messageTwo.Altitude);
+            console.log("经度: %s, 纬度: %s", location.Latitude, location.Longitude);
+        }
+    } else {
+        lastOne = line;
+        let message = dataProcessor(line);
+        location = calcLocationWithOneMessage(message);
+        console.log("数据: %s", line);
+        console.log("高度: %s", message.Altitude);
+        console.log("经度: %s, 纬度: %s", location.Latitude, location.Longitude);
+    }
+});
 
 // 数据处理 十六进制 转 二进制
 function dataProcessor(rawInformation) {
@@ -69,9 +105,8 @@ function getLongitudeInCPRFormat(message) {
     return data;
 }
 
-// 计算经度
-function calcLatitude(messageOne, messageTwo) {
-
+// 计算经纬度 两条数据
+function calcLocationWithTwoMessage(messageOne, messageTwo) {
     // 计算两个过数据的ICAO是否一致， 不一致则不进行计算
     if (messageOne.ICAO24 != messageTwo.ICAO24) {
         return {
@@ -91,8 +126,6 @@ function calcLatitude(messageOne, messageTwo) {
         messageEven = messageTwo;
         messageOdd = messageOne;
     }
-    console.log(messageEven);
-    console.log(messageOdd);
     let j = floor(59 * messageEven.Latitude - 60 * messageOdd.Latitude + (1 / 2));
     let LatEven = dLatEven * (mod(j, 60) + messageEven.Latitude);
     LatEven = LatEven >= 270 ? LatEven - 360 : LatEven;
@@ -101,219 +134,63 @@ function calcLatitude(messageOne, messageTwo) {
     let location =  {
         "LatEven": LatEven,
         "LatOdd": LatOdd,
-        "Latitude": messageEven.Time >= messageOdd.Time ? LatEven : LatOdd
+        "Latitude": messageEven.Time >= messageOdd.Time ? LatEven : LatOdd,
+        "IndexJ": j
     };
 
-    console.log(location);
-
     if (messageEven.Time >= messageOdd.Time) {
-        console.log("even > odd");
         let ni = NL(location.LatEven);
         ni = ni >= 1 ? ni : 1;
         let dLon = 360 / ni;
         let m = floor(messageEven.Longitude * (NL(location.LatEven) - 1) - messageOdd.Longitude * NL(location.LatEven) + 1 / 2);
         let longitude = dLon * (mod(m, ni) + messageEven.Longitude);
-        console.log(longitude);
+        location.Longitude = longitude;
+        location.IndexM = m;
+        location.EvenOrOddFlag = "even >= odd";
+        return location;
     } else {
-        console.log("odd > even");
         let ni = NL(location.LatOdd);
         ni = ni - 1 >= 1 ? ni - 1 : 1;
         let dLon = 360 / ni;
-        let m =floor(messageEven.longitude * 131072 * (NL(location.LatOdd) - 1) - messageOdd.longitude * 131072 * NL(location.LatOdd) + 1 /2);
-        let longitude = dLon * (mod(m, ni) + messageOdd.Longitude * 131072);
-        console.log(longitude);
+        dLon = dLon >= 180 ? dLon - 360 : dLon;
+        let m =floor(messageEven.longitude * (NL(location.LatOdd) - 1) - messageOdd.longitude * NL(location.LatOdd) + 1 /2);
+        let longitude = dLon * (mod(m, ni) + messageOdd.Longitude);
+        location.Longitude = longitude;
+        location.IndexM = m;
+        location.EvenOrOddFlag = "odd > even";
+        return location;
     }
 }
 
+// 计算经纬度 一条数据
+function calcLocationWithOneMessage(message) {
+    let dLat = message.EvenOrOddFlag === 0 ? 360 / 60 : 360 / 59;
+    let j = floor(LATref / dLat) + floor(mod(LATref, dLat) / dLat - message.Latitude + 1 / 2);
+    let Latitude = dLat * (j + message.Latitude);
+    let nl = NL(Latitude);
+    let dLon = nl > 0 ? 360 / nl : nl;
+    let m = floor(LONGref/dLon) + floor(mod(LONGref, dLon) / dLon - message.Longitude + 1 / 2);
+    let Longitude = dLon * (m + message.Longitude);
+    let location = {
+        dLat, j, Latitude, m, Longitude
+    };
+    return location;
+}
 
-// 此函数有问题，无法得到预期的结果
-async function NL(lat) {
-    let data =floor(
-        (2 * Math.PI) /
-        (Math.acos(
-            1 -
-            (
-                (1-Math.cos(Math.PI/(2*NZ))/
-                    (Math.cos(Math.PI/180*(lat)) * Math.cos(Math.PI/180*(lat)))
-                )
-            )
-        )));
+// NL 计算公式，由于js限制，只能分开计算，否则返回Nan
+function NL(lat) {
+    let data1 = (2 * Math.PI), data2 = (1-Math.cos(Math.PI/(2*NZ))), data3 = Math.cos(Math.PI/180*(lat));
+    let data = floor(data1 / (Math.acos(1 - (data2/ (data3 * data3)))));
     return data;
 }
 
-
-console.log(calcLatitude(dataProcessor(RawMessage), dataProcessor(RawMessageTwo)));
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function getDownlinkFormat() {
-    let data = '';
-    for(let i = 0; i <= 4; ++i) {
-        data = data + BinaryMessage[i];
-    }
-    return data;
-}
-
-function getTypeCode() {
-    let data = '';
-    for(let i = 32; i <= 36; ++i) {
-        data = data + BinaryMessage[i];
-    }
-    return data;
-}
-
-function getSurveillanceStatus() {
-    let data = '';
-    for(let i = 37; i <= 38; ++i) {
-        data = data + BinaryMessage[i];
-    }
-    return data;
-}
-
-function getNICSUpplement_B() {
-    return BinaryMessage[39];
-}
-
-
-
-function getTime() {
-    return BinaryMessage[52];
-}
-
-function getCPROddOrEvenFrameFlag() {
-    return BinaryMessage[53];
-}
-
-
-
+// floor函数
 function floor(number) {
     return Math.floor(number);
 }
 
+// mod函数
 function mod(x, y) {
     return x - y * floor(x/y);
 }
 
-
-
-
-// 似乎没啥用的一个函数 和下一个函数一致，用下一个函数即可
-function calcNL_lat() {
-    return floor(
-        (2*Math.PI)/
-        (Math.acos(
-            1 -
-            (
-                (1-Math.cos(Math.PI/(2*NZ))/
-                (Math.cos(Math.PI/180*(calcRawLatitude()/131072)) * Math.cos(Math.PI/180*(calcRawLatitude()/131072)))
-            )
-        )
-    )));
-}
-
-function calcNL1() {
-    let NL =  0;
-    const rawLatitude = calcRawLatitude();
-    if ( rawLatitude == 0 ){
-        NL = 59;
-    }
-
-    if ( rawLatitude == 87 ){
-        NL = 2;
-    }
-
-    if ( rawLatitude == -87 ){
-        NL = 2;
-    }
-
-    if ( rawLatitude > 87 ){
-        NL = 1;
-    }
-
-    if ( rawLatitude < -87 ){
-        NL = 1;
-    }
-
-    return NL;
-}
-
-
-function calcRawLatitude() {
-    const RawLatitude = parseInt(getLatitudeInCPRFormat(), 2);
-    return RawLatitude;
-}
-
-function calcRawLongtitude() {
-    return parseInt(getLongtitudeInCPRFormat(), 2);
-}
-
-function calcDLat() {
-    const DLat = getCPROddOrEvenFrameFlag() == 0 ? 360 / (4 * NZ) : 360.0 / (4 * NZ - 1);
-    return DLat;
-}
-
-function clacLatitudeIndexJ() {
-    const dLat = calcDLat();
-    const LatitudeIndexJ =  floor(LATref/dLat) + floor((mod(LATref, dLat)/dLat) - calcRawLatitude()/131072.0 + 1/2);
-    return LatitudeIndexJ;
-}
-
-function calcLatitudeOOOOO() {
-    return calcDLat() * (clacLatitudeIndexJ() + calcRawLatitude()/131072);
-}
-// console.log(calcLatitude());
-
-function calcDLon() {
-    const NL_lat = calcNL_lat();
-    console.log("NL_lat: ", NL_lat);
-    if ( NL_lat > 0) {
-        return 360/(NL_lat*0.6);
-    }
-
-    if(NL_lat == 0) {
-        return 360;
-    }
-}
-
-function calcLongtitudeIndexM() {
-    const dLon = calcDLon();
-    console.log("dLon: ", dLon);
-    const LongtitudeIndexM = floor(LONGref/dLon) + floor(mod(LONGref, dLon)/dLon - calcRawLongtitude()/131072 + 1/2);
-    console.log(LongtitudeIndexM)
-    return LongtitudeIndexM;
-}
-
-function calcLongtitude() {
-    return calcDLon() * (calcLongtitudeIndexM() + calcRawLongtitude()/131072);
-}
-
-// console.log(calcLongtitude());
-// const Decoder = require('mode-s-decoder')
-// const decoder = new Decoder()
-// const data = new Uint8Array([0x8f, 0x46, 0x1f, 0x36, 0x60, 0x4d, 0x74, 0x82, 0xe4, 0x4d, 0x97, 0xbc, 0xd6, 0x4e])
-// const newdata = new Uint8Array([0x8d, 0x40, 0x62, 0x1d, 0x58, 0xc3, 0x82, 0xd6, 0x90, 0xc8, 0xac, 0x28, 0x63, 0xa7]);
-// console.log(newdata.toString(2))
-// const message = decoder.parse(newdatah)
-// console.log(message)
